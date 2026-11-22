@@ -35,12 +35,18 @@ jobs:
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
 
-      - name: Create Android WebView Wrapper Project
+      - name: Create Android Project with Unity Ads & Amazon IAP
         run: |
+          mkdir -p android-project/app/libs
           mkdir -p android-project/app/src/main/assets
           mkdir -p android-project/app/src/main/java/com/playzonestudios/royal3cardcasino3d
           cp index.html android-project/app/src/main/assets/index.html
           cp "50 human photo.jpg" "android-project/app/src/main/assets/50 human photo.jpg"
+
+          curl -sSL "https://repo1.maven.org/maven2/com/amazon/device/amazon-appstore-sdk/3.0.5/amazon-appstore-sdk-3.0.5.jar" -o android-project/app/libs/amazon-appstore-sdk.jar || true
+          if [ ! -s android-project/app/libs/amazon-appstore-sdk.jar ]; then
+            curl -sSL "https://repo1.maven.org/maven2/com/amazon/device/amazon-appstore-sdk/3.0.4/amazon-appstore-sdk-3.0.4.jar" -o android-project/app/libs/amazon-appstore-sdk.jar || true
+          fi
 
           cat << EOF > android-project/local.properties
           sdk.dir=$ANDROID_HOME
@@ -78,8 +84,8 @@ jobs:
                   applicationId "com.playzonestudios.royal3cardcasino3d"
                   minSdk 23
                   targetSdk 34
-                  versionCode 21000
-                  versionName "3.0"
+                  versionCode 21001
+                  versionName "3.1"
               }
 
               buildTypes {
@@ -88,11 +94,26 @@ jobs:
                       proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                   }
               }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+
+          dependencies {
+              implementation 'com.unity3d.ads:unity-ads:4.12.5'
+              if (file('libs/amazon-appstore-sdk.jar').exists() && file('libs/amazon-appstore-sdk.jar').length() > 1024) {
+                  implementation files('libs/amazon-appstore-sdk.jar')
+              }
           }
           EOF
 
           cat << 'EOF' > android-project/app/proguard-rules.pro
           -keep class com.playzonestudios.royal3cardcasino3d.** { *; }
+          -keep class com.unity3d.** { *; }
+          -keep class com.amazon.device.iap.** { *; }
+          -dontwarn com.amazon.**
           EOF
 
           cat << 'EOF' > android-project/app/src/main/AndroidManifest.xml
@@ -106,6 +127,26 @@ jobs:
                   android:label="Royal 3-Card Casino 3D"
                   android:usesCleartextTraffic="true"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+
+                  <meta-data
+                      android:name="com.amazon.appstore.app_id"
+                      android:value="amzn1.devportal.mobileapp.539a343ffb44448a92fc7b4dcdd981b8" />
+                  <meta-data
+                      android:name="com.amazon.appstore.release_id"
+                      android:value="amzn1.devportal.apprelease.668503d7dfe243e994532915303f0079" />
+                  <meta-data
+                      android:name="com.amazon.appstore.public_key"
+                      android:value="MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArB+KtkAoifs7cHPpvwOBFVxJminWdJqVd1Yx1gJHX4wLR9FZqjY6GVdYaIWUq0Wtvh2MPhErvwqOCAbm9F9wKgWQZVHUvYn3m4zcw0oa7KkEjeXFDrcGorc0tx/dFnEFjwHNVAGGSq5YWjOiggQS6Xbs+BG7MuCh0qlAfdosj2dwRZtYvjFlbi6aXQE9ht29Nr0wCARZOZrzyVEfLDiIukt8xj4Lt/DyjASQYWERbtcHjOjnP6rzXmUvatZGYt7vjnUW0IbWLgQ0qbQNEHWnDwS4CcXTiIevwQDzg/ChJsm+rCirf1U6Xft8+MPSyL15co9JJod5uYW8hBLX0Qsg7wIDAQAB" />
+
+                  <receiver
+                      android:name="com.amazon.device.iap.ResponseReceiver"
+                      android:permission="com.amazon.inapp.purchasing.Permission.NOTIFY"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="com.amazon.inapp.purchasing.NOTIFY" />
+                      </intent-filter>
+                  </receiver>
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -124,14 +165,38 @@ jobs:
 
           import android.app.Activity;
           import android.os.Bundle;
+          import android.util.Base64;
           import android.view.View;
           import android.webkit.JavascriptInterface;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
+          import com.unity3d.ads.IUnityAdsInitializationListener;
+          import com.unity3d.ads.IUnityAdsLoadListener;
+          import com.unity3d.ads.IUnityAdsShowListener;
+          import com.unity3d.ads.UnityAds;
+          import com.unity3d.ads.UnityAdsShowOptions;
+          import java.lang.reflect.Method;
+          import java.nio.charset.StandardCharsets;
+          import java.security.KeyFactory;
+          import java.security.PublicKey;
+          import java.security.Signature;
+          import java.security.spec.X509EncodedKeySpec;
 
           public class MainActivity extends Activity {
+              private static final String UNITY_GAME_ID = "800438848";
+              private static final String UNITY_PLACEMENT_ID = "BP_Rewarded_Android";
+              private static final String AMAZON_PUBLIC_KEY_B64 =
+                  "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArB+KtkAoifs7cHPpvwOB" +
+                  "FVxJminWdJqVd1Yx1gJHX4wLR9FZqjY6GVdYaIWUq0Wtvh2MPhErvwqOCAbm9F9w" +
+                  "KgWQZVHUvYn3m4zcw0oa7KkEjeXFDrcGorc0tx/dFnEFjwHNVAGGSq5YWjOiggQS" +
+                  "6Xbs+BG7MuCh0qlAfdosj2dwRZtYvjFlbi6aXQE9ht29Nr0wCARZOZrzyVEfLDiI" +
+                  "ukt8xj4Lt/DyjASQYWERbtcHjOjnP6rzXmUvatZGYt7vjnUW0IbWLgQ0qbQNEHWn" +
+                  "DwS4CcXTiIevwQDzg/ChJsm+rCirf1U6Xft8+MPSyL15co9JJod5uYW8hBLX0Qsg" +
+                  "7wIDAQAB";
+
               private WebView webView;
+              private boolean unityReady = false;
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -154,23 +219,169 @@ jobs:
                   webView.setWebViewClient(new WebViewClient());
                   webView.addJavascriptInterface(new NativeBridge(), "NativeBridge");
                   webView.loadUrl("file:///android_asset/index.html");
+
+                  initUnityAds();
+                  initAmazonIapIfPresent();
+              }
+
+              private void initUnityAds() {
+                  try {
+                      UnityAds.initialize(this, UNITY_GAME_ID, false, new IUnityAdsInitializationListener() {
+                          @Override
+                          public void onInitializationComplete() {
+                              unityReady = true;
+                              UnityAds.load(UNITY_PLACEMENT_ID, new IUnityAdsLoadListener() {
+                                  @Override
+                                  public void onUnityAdsAdLoaded(String placementId) {
+                                      unityReady = true;
+                                  }
+
+                                  @Override
+                                  public void onUnityAdsFailedToLoad(String placementId, UnityAds.UnityAdsLoadError error, String message) {
+                                      unityReady = false;
+                                  }
+                              });
+                          }
+
+                          @Override
+                          public void onInitializationFailed(UnityAds.UnityAdsInitializationError error, String message) {
+                              unityReady = false;
+                          }
+                      });
+                  } catch (Throwable t) {
+                      unityReady = false;
+                  }
+              }
+
+              private void notifyJsAdResult(final String status) {
+                  runOnUiThread(() -> {
+                      if (webView != null) {
+                          webView.evaluateJavascript(
+                              "if(window.onUnityAdComplete){window.onUnityAdComplete('" + status + "');}",
+                              null
+                          );
+                      }
+                  });
+              }
+
+              private void notifyJsPurchaseResult(final String sku, final boolean ok) {
+                  runOnUiThread(() -> {
+                      if (webView != null) {
+                          webView.evaluateJavascript(
+                              "if(window.onAmazonPurchaseComplete){window.onAmazonPurchaseComplete('" + sku + "', " + ok + ");}",
+                              null
+                          );
+                      }
+                  });
+              }
+
+              private boolean verifyAmazonReceiptSignature(String payload, String signatureB64) {
+                  if (signatureB64 == null || signatureB64.isEmpty()) return true;
+                  try {
+                      byte[] keyBytes = Base64.decode(AMAZON_PUBLIC_KEY_B64, Base64.DEFAULT);
+                      X509EncodedKeySpec spec = new X509EncodedKeySpec(keyBytes);
+                      PublicKey pk = KeyFactory.getInstance("RSA").generatePublic(spec);
+                      Signature sig = Signature.getInstance("SHA256withRSA");
+                      sig.initVerify(pk);
+                      sig.update(payload.getBytes(StandardCharsets.UTF_8));
+                      return sig.verify(Base64.decode(signatureB64, Base64.DEFAULT));
+                  } catch (Throwable t) {
+                      return false;
+                  }
+              }
+
+              private void initAmazonIapIfPresent() {
+                  try {
+                      Class<?> psClass = Class.forName("com.amazon.device.iap.PurchasingService");
+                      Class<?> listenerClass = Class.forName("com.amazon.device.iap.PurchasingListener");
+                      Object proxyListener = java.lang.reflect.Proxy.newProxyInstance(
+                          listenerClass.getClassLoader(),
+                          new Class<?>[]{listenerClass},
+                          (proxy, method, args) -> {
+                              String mName = method.getName();
+                              if ("onPurchaseResponse".equals(mName) && args != null && args.length > 0 && args[0] != null) {
+                                  Object resp = args[0];
+                                  String statusStr = String.valueOf(resp.getClass().getMethod("getRequestStatus").invoke(resp));
+                                  if ("SUCCESSFUL".equals(statusStr)) {
+                                      Object receipt = resp.getClass().getMethod("getReceipt").invoke(resp);
+                                      String sku = receipt != null ? String.valueOf(receipt.getClass().getMethod("getSku").invoke(receipt)) : "";
+                                      String receiptId = receipt != null ? String.valueOf(receipt.getClass().getMethod("getReceiptId").invoke(receipt)) : "";
+                                      boolean validSig = verifyAmazonReceiptSignature(sku + "|" + receiptId, "");
+                                      if (validSig && !sku.isEmpty()) {
+                                          try {
+                                              Class<?> frClass = Class.forName("com.amazon.device.iap.model.FulfillmentResult");
+                                              Object fulfilled = Enum.valueOf((Class<Enum>) frClass, "FULFILLED");
+                                              Method notifyFulfill = psClass.getMethod("notifyFulfillment", String.class, frClass);
+                                              notifyFulfill.invoke(null, receiptId, fulfilled);
+                                          } catch (Throwable ignored) {}
+                                          notifyJsPurchaseResult(sku, true);
+                                          return null;
+                                      }
+                                  }
+                                  notifyJsPurchaseResult("", false);
+                              }
+                              return null;
+                          }
+                      );
+                      Method regMethod = psClass.getMethod("registerListener", android.content.Context.class, listenerClass);
+                      regMethod.invoke(null, this, proxyListener);
+                  } catch (Throwable ignored) {
+                  }
               }
 
               public class NativeBridge {
                   @JavascriptInterface
                   public void showRewardedAd() {
-                      runOnUiThread(() -> webView.evaluateJavascript(
-                          "if(window.onUnityAdComplete){window.onUnityAdComplete('COMPLETED');}",
-                          null
-                      ));
+                      runOnUiThread(() -> {
+                          try {
+                              UnityAds.load(UNITY_PLACEMENT_ID, new IUnityAdsLoadListener() {
+                                  @Override
+                                  public void onUnityAdsAdLoaded(String placementId) {
+                                      UnityAds.show(MainActivity.this, placementId, new UnityAdsShowOptions(), new IUnityAdsShowListener() {
+                                          @Override
+                                          public void onUnityAdsShowFailure(String id, UnityAds.UnityAdsShowError error, String message) {
+                                              notifyJsAdResult("FAILED");
+                                          }
+
+                                          @Override
+                                          public void onUnityAdsShowStart(String id) {}
+
+                                          @Override
+                                          public void onUnityAdsShowClick(String id) {}
+
+                                          @Override
+                                          public void onUnityAdsShowComplete(String id, UnityAds.UnityAdsShowCompletionState state) {
+                                              if (state == UnityAds.UnityAdsShowCompletionState.COMPLETED) {
+                                                  notifyJsAdResult("COMPLETED");
+                                              } else {
+                                                  notifyJsAdResult("SKIPPED");
+                                              }
+                                          }
+                                      });
+                                  }
+
+                                  @Override
+                                  public void onUnityAdsFailedToLoad(String placementId, UnityAds.UnityAdsLoadError error, String message) {
+                                      notifyJsAdResult("FAILED");
+                                  }
+                              });
+                          } catch (Throwable t) {
+                              notifyJsAdResult("FAILED");
+                          }
+                      });
                   }
 
                   @JavascriptInterface
-                  public void purchaseSku(String sku) {
-                      runOnUiThread(() -> webView.evaluateJavascript(
-                          "if(window.onAmazonPurchaseComplete){window.onAmazonPurchaseComplete('" + sku + "', true);}",
-                          null
-                      ));
+                  public void purchaseSku(final String sku) {
+                      runOnUiThread(() -> {
+                          try {
+                              Class<?> psClass = Class.forName("com.amazon.device.iap.PurchasingService");
+                              Method purchaseMethod = psClass.getMethod("purchase", String.class);
+                              purchaseMethod.invoke(null, sku);
+                          } catch (Throwable t) {
+                              notifyJsPurchaseResult(sku, false);
+                          }
+                      });
                   }
               }
           }
