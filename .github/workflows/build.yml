@@ -100,8 +100,8 @@ jobs:
                   applicationId "com.playzonestudios.royal3cardcasino3d"
                   minSdk 23
                   targetSdk 34
-                  versionCode 21002
-                  versionName "3.2"
+                  versionCode 21003
+                  versionName "3.3"
               }
 
               buildTypes {
