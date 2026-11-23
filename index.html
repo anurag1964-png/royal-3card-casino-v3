@@ -1621,7 +1621,7 @@ window.onNativeUnityAdComplete = function() {
 AdRewardEngine.handleAdResult('COMPLETED');
 };
 
-/* ---------- Native Amazon Appstore IAP Engine (Exact Global Packs) ---------- */
+/* ---------- Native Store IAP Engine (Exact Global Packs) ---------- */
 const PACKS=[
 {sku:'chips_pack_starter', usd:'$0.99',  chips:2000000,   tag:'STARTER'},
 {sku:'chips_pack_bronze',  usd:'$1.99',  chips:5000000,   tag:'BRONZE'},
@@ -1687,21 +1687,21 @@ const pack = PACKS.find(p => p.sku === sku);
 if(!pack) return;
 
 if(window.NativeBridge && typeof window.NativeBridge.purchaseSku === 'function'){
-try{ window.NativeBridge.purchaseSku(sku); toast('Opening Amazon Checkout...'); return; }
-catch(e){ toast('Unable to start Amazon Checkout.'); return; }
+try{ window.NativeBridge.purchaseSku(sku); toast('Opening Store Checkout...'); return; }
+catch(e){ toast('Unable to start checkout.'); return; }
 }
 
 if(window.AndroidIAP && typeof window.AndroidIAP.purchase === 'function'){
-try{ window.AndroidIAP.purchase(sku); toast('Opening Amazon Checkout...'); return; }
-catch(e){ toast('Unable to start Amazon Checkout.'); return; }
+try{ window.AndroidIAP.purchase(sku); toast('Opening Store Checkout...'); return; }
+catch(e){ toast('Unable to start checkout.'); return; }
 }
 
 if(this.hasSdk()){
-try{ window.amzn_wa.IAP.purchase(sku); toast('Opening Amazon Checkout...'); return; }
-catch(e){ toast('Unable to start Amazon Checkout.'); return; }
+try{ window.amzn_wa.IAP.purchase(sku); toast('Opening Store Checkout...'); return; }
+catch(e){ toast('Unable to start checkout.'); return; }
 }
 
-toast('Amazon Appstore IAP is available inside the app build.');
+toast('In-App Purchase is available inside the app build.');
 }
 };
 
